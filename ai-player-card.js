@@ -470,19 +470,19 @@ class AiPlayerCard extends HTMLElement {
         .view[data-view="player"] { display: flex; flex-direction: column; }
 
         /* ------- přehrávač ------- */
-        .hero { position: relative; border-radius: 14px; overflow: hidden;
+        .hero { border-radius: 14px; overflow: hidden;
                 background: var(--secondary-background-color, #1c1c1e);
-                flex: 1 1 auto; min-height: 130px;
-                display: flex; align-items: center; justify-content: center; }
-        .hero img.cover { position: absolute; inset: 0; width: 100%; height: 100%;
-                          object-fit: cover; display: block; }
-        .hero .no-cover { font-size: 46px; opacity: .4; }
-        .hero video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-        .hero .fs { position: absolute; top: 8px; right: 8px; z-index: 2;
-                    background: rgba(0,0,0,.45); border-radius: 10px; }
-        canvas.viz { position: absolute; left: 0; right: 0; bottom: 0; width: 100%;
-                     height: 56px; opacity: .9; pointer-events: none;
-                     background: linear-gradient(transparent, rgba(0,0,0,.35)); }
+                flex: 1 1 auto; min-height: 130px; display: flex; }
+        /* Cover vlevo ~1/3, vizualizace vpravo ~2/3 */
+        .cover-pane { position: relative; flex: 1; min-width: 0;
+                      display: flex; align-items: center; justify-content: center; }
+        .cover-pane img.cover { position: absolute; inset: 0; width: 100%; height: 100%;
+                                object-fit: cover; display: block; }
+        .cover-pane .no-cover { font-size: 46px; opacity: .4; }
+        .cover-pane video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+        .cover-pane .fs { position: absolute; top: 8px; left: 8px; z-index: 2;
+                          background: rgba(0,0,0,.45); border-radius: 10px; }
+        canvas.viz { flex: 2; min-width: 0; height: 100%; pointer-events: none; }
 
         .p-meta { text-align: center; margin: 8px 4px 2px; flex-shrink: 0; }
         .p-meta .t { font-size: 17px; font-weight: 600; white-space: nowrap;
@@ -593,10 +593,12 @@ class AiPlayerCard extends HTMLElement {
 
             <section class="view" data-view="player">
               <div class="hero">
-                <img class="cover" data-cover alt="" style="display:none">
-                <div class="no-cover" data-nocover>♪</div>
-                <video data-video playsinline style="display:none"></video>
-                <button class="fs" data-fs style="display:none" title="Fullscreen">⛶</button>
+                <div class="cover-pane">
+                  <img class="cover" data-cover alt="" style="display:none">
+                  <div class="no-cover" data-nocover>♪</div>
+                  <video data-video playsinline style="display:none"></video>
+                  <button class="fs" data-fs style="display:none" title="Fullscreen">⛶</button>
+                </div>
                 <canvas class="viz" data-viz></canvas>
               </div>
               <div class="p-meta">
@@ -801,7 +803,9 @@ class AiPlayerCard extends HTMLElement {
           (this._playlists.length
             ? `<div class="pl-grid">${this._playlists.map((p, n) => `
                 <div class="tile" data-pl="${n}">
-                  <div class="tile-cover">📋</div>
+                  ${p.cover_url
+                    ? `<img src="${this._base + p.cover_url}" loading="lazy" alt="">`
+                    : '<div class="tile-cover">📋</div>'}
                   <div class="tile-t">${this._esc(p.name)}</div>
                   <div class="tile-s">${p.items_count} položek</div>
                 </div>`).join('')}</div>`
