@@ -472,7 +472,7 @@ class AiPlayerCard extends HTMLElement {
         /* ------- přehrávač ------- */
         .hero { position: relative; border-radius: 14px; overflow: hidden;
                 background: var(--secondary-background-color, #1c1c1e);
-                height: 190px; flex-shrink: 0;
+                flex: 1 1 auto; min-height: 130px;
                 display: flex; align-items: center; justify-content: center; }
         .hero img.cover { position: absolute; inset: 0; width: 100%; height: 100%;
                           object-fit: cover; display: block; }
@@ -484,12 +484,12 @@ class AiPlayerCard extends HTMLElement {
                      height: 56px; opacity: .9; pointer-events: none;
                      background: linear-gradient(transparent, rgba(0,0,0,.35)); }
 
-        .p-meta { text-align: center; margin: 12px 4px 4px; }
+        .p-meta { text-align: center; margin: 8px 4px 2px; flex-shrink: 0; }
         .p-meta .t { font-size: 17px; font-weight: 600; white-space: nowrap;
                      overflow: hidden; text-overflow: ellipsis; }
         .p-meta .a { font-size: 13px; color: var(--secondary-text-color); margin-top: 2px;
                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .seek-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+        .seek-row { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
         .seek-row .time { font-size: 11px; color: var(--secondary-text-color); min-width: 74px; }
 
         input[type=range] { -webkit-appearance: none; appearance: none; width: 100%;
@@ -505,7 +505,7 @@ class AiPlayerCard extends HTMLElement {
           border-radius: 50%; background: var(--primary-color); }
 
         .controls { display: flex; align-items: center; justify-content: center;
-                    gap: 4px; margin-top: 2px; }
+                    gap: 4px; flex-shrink: 0; }
         button { background: none; border: none; cursor: pointer; padding: 10px;
                  color: var(--primary-text-color); border-radius: 12px;
                  min-width: 44px; min-height: 44px; font-size: 18px; font-family: inherit;
@@ -516,7 +516,7 @@ class AiPlayerCard extends HTMLElement {
         button.play { font-size: 34px; }
 
         .row2 { display: flex; align-items: center; justify-content: space-between;
-                gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+                gap: 8px; margin-top: 2px; flex-wrap: wrap; flex-shrink: 0; }
         .vol { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 130px;
                color: var(--secondary-text-color); }
         .sleep { display: flex; align-items: center; gap: 6px;
