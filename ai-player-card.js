@@ -551,8 +551,12 @@ class AiPlayerCard extends HTMLElement {
         .tile:active { opacity: .7; }
         .tile.playing { outline: 2px solid var(--primary-color); }
         .tile img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
-        .tile-nocover { width: 100%; aspect-ratio: 1; display: flex; align-items: center;
-                        justify-content: center; font-size: 30px; opacity: .4; }
+        .tile-nocover, .tile-cover { width: 100%; aspect-ratio: 1; display: flex;
+                        align-items: center; justify-content: center; font-size: 30px; opacity: .4; }
+        .tile-cover { font-size: 44px; opacity: 1;
+                      background: linear-gradient(135deg,
+                        var(--primary-color, #03a9f4) 0%,
+                        var(--secondary-background-color, #f2f2f2) 160%); }
         .tile-t { font-size: 12px; font-weight: 600; padding: 6px 8px 0;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .tile-s { font-size: 11px; color: var(--secondary-text-color); padding: 0 8px 6px;
@@ -795,12 +799,12 @@ class AiPlayerCard extends HTMLElement {
         host.innerHTML =
           `<div class="list-header">${VIEW_TITLES.playlists}</div>` +
           (this._playlists.length
-            ? this._playlists.map((p, n) => `
-                <div class="row" data-pl="${n}">
-                  <div class="meta2"><div class="t">${this._esc(p.name)}</div>
-                  <div class="s">${p.items_count} položek</div></div>
-                  <div class="d">›</div>
-                </div>`).join('')
+            ? `<div class="pl-grid">${this._playlists.map((p, n) => `
+                <div class="tile" data-pl="${n}">
+                  <div class="tile-cover">📋</div>
+                  <div class="tile-t">${this._esc(p.name)}</div>
+                  <div class="tile-s">${p.items_count} položek</div>
+                </div>`).join('')}</div>`
             : '<div class="empty">Žádné playlisty.</div>');
         host.querySelectorAll('[data-pl]').forEach((el) =>
           el.addEventListener('click', () =>
