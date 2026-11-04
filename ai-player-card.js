@@ -464,14 +464,17 @@ class AiPlayerCard extends HTMLElement {
         .viewport { overflow: hidden; touch-action: pan-y; user-select: none;
                     -webkit-user-select: none; }
         .track { display: flex; transition: transform .28s cubic-bezier(.33,1,.68,1); }
-        .view { flex: 0 0 100%; min-width: 0; height: 460px; overflow-y: auto;
+        .view { flex: 0 0 100%; min-width: 0; height: 480px; overflow-y: auto;
                 overscroll-behavior: contain; padding: 14px 14px 6px; box-sizing: border-box; }
+        .view[data-view="player"] { display: flex; flex-direction: column; }
 
         /* ------- přehrávač ------- */
         .hero { position: relative; border-radius: 14px; overflow: hidden;
                 background: var(--secondary-background-color, #1c1c1e);
-                aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
-        .hero img.cover { width: 100%; height: 100%; object-fit: cover; display: block; }
+                height: 190px; flex-shrink: 0;
+                display: flex; align-items: center; justify-content: center; }
+        .hero img.cover { position: absolute; inset: 0; width: 100%; height: 100%;
+                          object-fit: cover; display: block; }
         .hero .no-cover { font-size: 46px; opacity: .4; }
         .hero video { width: 100%; height: 100%; object-fit: contain; background: #000; }
         .hero .fs { position: absolute; top: 8px; right: 8px; z-index: 2;
@@ -540,6 +543,19 @@ class AiPlayerCard extends HTMLElement {
         .row .s { font-size: 12px; color: var(--secondary-text-color);
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .row .d { font-size: 12px; color: var(--secondary-text-color); }
+        .pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+                   gap: 10px; }
+        .tile { border-radius: 10px; overflow: hidden; cursor: pointer; min-height: 44px;
+                background: var(--secondary-background-color, #f2f2f2); }
+        .tile:active { opacity: .7; }
+        .tile.playing { outline: 2px solid var(--primary-color); }
+        .tile img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+        .tile-nocover { width: 100%; aspect-ratio: 1; display: flex; align-items: center;
+                        justify-content: center; font-size: 30px; opacity: .4; }
+        .tile-t { font-size: 12px; font-weight: 600; padding: 6px 8px 0;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .tile-s { font-size: 11px; color: var(--secondary-text-color); padding: 0 8px 6px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .more, .back { font-size: 14px; color: var(--primary-color); }
         .empty { padding: 24px; text-align: center; color: var(--secondary-text-color); font-size: 14px; }
 
@@ -749,13 +765,28 @@ class AiPlayerCard extends HTMLElement {
 
     if (name === 'playlists') {
       if (this._openPlaylist) {
+        const items = this._openPlaylist.items;
+        const tiles = items.length
+          ? `<div class="pl-grid">${items.map((i, n) => `
+              <div class="tile ${current && i.uuid === current.uuid ? 'playing' : ''}" data-row="${n}">
+                ${i.coverUrl
+                  ? `<img src="${this._base + i.coverUrl}" loading="lazy" alt="">`
+                  : '<div class="tile-nocover">♪</div>'}
+                <div class="tile-t">${this._esc(i.title)}</div>
+                <div class="tile-s">${this._esc(i.artist || '')}</div>
+              </div>`).join('')}</div>`
+          : '<div class="empty">Playlist je prázdný.</div>';
+        const list = items.length ? items.map((i, n) => this._row(i, current && i.uuid === current.uuid, n)).join('') : '';
         host.innerHTML =
-          `<div class="list-header"><button class="back" data-back>←</button>${this._esc(this._openPlaylist.name)}</div>` +
-          (this._openPlaylist.items.length
-            ? this._openPlaylist.items.map((i, n) => this._row(i, current && i.uuid === current.uuid, n)).join('')
-            : '<div class="empty">Playlist je prázdný.</div>');
+          `<div class="list-header"><button class="back" data-back>←</button>${this._esc(this._openPlaylist.name)}
+            <button class="more" data-toggleview style="margin-left:auto">${this._plGrid ? '☰' : '▦'}</button></div>` +
+          (this._plGrid ? tiles : list || '<div class="empty">Playlist je prázdný.</div>');
         host.querySelector('[data-back]').addEventListener('click', () => {
           this._openPlaylist = null;
+          this._renderView('playlists');
+        });
+        host.querySelector('[data-toggleview]').addEventListener('click', () => {
+          this._plGrid = !this._plGrid;
           this._renderView('playlists');
         });
         this._bindRows(host, (n) => this._playQueue(this._openPlaylist.items, n));
