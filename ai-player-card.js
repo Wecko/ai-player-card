@@ -34,6 +34,7 @@ class AiPlayerCard extends HTMLElement {
     this._items = [];
     this._playlists = [];
     this._openPlaylist = null;
+    this._plGrid = true;
     this._reported = false;
     this._debounce = null;
     this._drag = null;
