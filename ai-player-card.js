@@ -38,6 +38,16 @@ class AiPlayerCard extends HTMLElement {
     this._reported = false;
     this._debounce = null;
     this._drag = null;
+    // Stabilní device id pro sdílený stav přehrávače (player/state) —
+    // díky němu se pozice synchronizuje napříč zařízeními.
+    this._deviceId = localStorage.getItem('ai-player-device');
+    if (!this._deviceId) {
+      this._deviceId = 'ha-' + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem('ai-player-device', this._deviceId);
+    }
+    this._beatTimer = null;
+    this._resumePos = null;
+    this._resumeOffer = null;
     // Vizualizace: real = Web Audio analyser (vyžaduje CORS na /media/),
     // fake = animované pásy, když CORS chybí.
     this._viz = { ctx: null, analyser: null, sourceFor: null, raf: null, real: null };
@@ -111,8 +121,24 @@ class AiPlayerCard extends HTMLElement {
 
   async _openPlaylistItems(playlist) {
     try {
-      const data = await this._api(`/api/v1/playlists/${playlist.id}/items`);
+      const [data, stateRes] = await Promise.all([
+        this._api(`/api/v1/playlists/${playlist.id}/items`),
+        this._api('/api/v1/player/state').catch(() => null),
+      ]);
       this._openPlaylist = { ...playlist, items: data.data };
+
+      // Nabídka pokračování: poslední sdílený stav ukazuje na skladbu,
+      // která je v tomto playlistu → můžeme navázat tam, kde jiné
+      // zařízení (nebo tahle karta) skončilo.
+      this._resumeOffer = null;
+      const s = stateRes && stateRes.state;
+      if (s && s.current_uuid && s.position_seconds > 0) {
+        const idx = data.data.findIndex((i) => i.uuid === s.current_uuid);
+        if (idx >= 0) {
+          this._resumeOffer = { index: idx, position: s.position_seconds, item: data.data[idx] };
+        }
+      }
+
       this._renderView('playlists');
     } catch (e) {
       this._showError(`Playlist: ${e.message}`);
@@ -143,6 +169,7 @@ class AiPlayerCard extends HTMLElement {
       media.src = url;
       media.play();
       this._reported = false;
+      this._beat();
       this._refreshPlayer();
       this._refreshLists();
     } catch (e) {
@@ -414,8 +441,22 @@ class AiPlayerCard extends HTMLElement {
   _bindMedia(media) {
     media.volume = this._userVolume ?? 0.8;
     media.addEventListener('ended', () => this._onEnded());
-    media.addEventListener('play', () => this._refreshPlayer());
-    media.addEventListener('pause', () => this._refreshPlayer());
+    media.addEventListener('play', () => {
+      this._refreshPlayer();
+      this._startHeartbeat();
+    });
+    media.addEventListener('pause', () => {
+      this._refreshPlayer();
+      this._stopHeartbeat();
+      this._beat(); // jeden uvolňující tik — ostatní zařízení vědí, že jsme ztichli
+    });
+    media.addEventListener('loadedmetadata', () => {
+      // Pokračování: skočíme tam, kde se naposledy skončilo.
+      if (this._resumePos !== null && isFinite(media.duration)) {
+        media.currentTime = Math.min(this._resumePos, Math.max(0, media.duration - 1));
+        this._resumePos = null;
+      }
+    });
     media.addEventListener('timeupdate', () => {
       const pos = media.currentTime;
       const dur = media.duration || 0;
@@ -443,6 +484,56 @@ class AiPlayerCard extends HTMLElement {
     const m = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
     return `${m}:${String(sec).padStart(2, '0')}`;
+  }
+
+  /* --------------------- sdílený stav (resume) --------------------- */
+
+  _startHeartbeat() {
+    if (this._beatTimer) return;
+    this._beatTimer = setInterval(() => this._beat(), 5000);
+  }
+
+  _stopHeartbeat() {
+    clearInterval(this._beatTimer);
+    this._beatTimer = null;
+  }
+
+  /**
+   * Srdeční tik do sdíleného stavu přehrávače. Posíláme frontu i pozici —
+   * jiné zařízení (web, další HA karta) tak může nabídnout pokračování
+   * přesně tam, kde tato karta skončila.
+   */
+  _beat() {
+    const item = this._queue[this._index];
+    if (!item) return;
+    const media = this._media();
+    this._api('/api/v1/player/state', {
+      method: 'PUT',
+      body: JSON.stringify({
+        device_id: this._deviceId,
+        current_uuid: item.uuid,
+        position_seconds: media.currentTime || 0,
+        volume: this._userVolume ?? 0.8,
+        is_playing: !media.paused,
+        repeat_mode: this._repeat,
+        shuffle: this._shuffle,
+        queue: this._queue.map((i) => i.uuid),
+      }),
+    }).catch(() => {});
+  }
+
+  _resumePlaylist() {
+    const offer = this._resumeOffer;
+    if (!offer || !this._openPlaylist) return;
+    this._resumePos = offer.position;
+    this._resumeOffer = null;
+    this._playQueue(this._openPlaylist.items, offer.index);
+    this._setView(0);
+  }
+
+  _dismissResume() {
+    this._resumeOffer = null;
+    this._renderView('playlists');
   }
 
   _showError(msg) {
@@ -582,6 +673,12 @@ class AiPlayerCard extends HTMLElement {
         .tile-s { font-size: 11px; color: var(--secondary-text-color); padding: 0 8px 6px;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .more, .back { font-size: 14px; color: var(--primary-color); }
+        .resume { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+                  margin-bottom: 8px; border-radius: 12px;
+                  background: var(--secondary-background-color, #f2f2f2); }
+        .resume .r-m { flex: 1; min-width: 0; font-size: 13px; }
+        .resume .r-yes { background: var(--primary-color); color: #fff;
+                         padding: 8px 14px; font-size: 13px; }
         .empty { padding: 24px; text-align: center; color: var(--secondary-text-color); font-size: 14px; }
 
         /* ------- mini přehrávač + záložky ------- */
@@ -804,10 +901,25 @@ class AiPlayerCard extends HTMLElement {
               </div>`).join('')}</div>`
           : '<div class="empty">Playlist je prázdný.</div>';
         const list = items.length ? items.map((i, n) => this._row(i, current && i.uuid === current.uuid, n)).join('') : '';
+        const resume = this._resumeOffer
+          ? `<div class="resume">
+               <div class="r-m">Pokračovat od ${this._fmtDuration(this._resumeOffer.position)}<br>
+               <b>${this._esc(this._resumeOffer.item.title)}</b></div>
+               <button class="r-yes" data-resume>Pokračovat</button>
+               <button class="r-no" data-dismiss-resume title="Zavřít">✕</button>
+             </div>`
+          : '';
+
         host.innerHTML =
           `<div class="list-header"><button class="back" data-back>←</button>${this._esc(this._openPlaylist.name)}
             <button class="more" data-toggleview style="margin-left:auto">${this._plGrid ? '☰' : '▦'}</button></div>` +
+          resume +
           (this._plGrid ? tiles : list || '<div class="empty">Playlist je prázdný.</div>');
+
+        const resumeBtn = host.querySelector('[data-resume]');
+        if (resumeBtn) resumeBtn.addEventListener('click', () => this._resumePlaylist());
+        const dismissBtn = host.querySelector('[data-dismiss-resume]');
+        if (dismissBtn) dismissBtn.addEventListener('click', () => this._dismissResume());
         host.querySelector('[data-back]').addEventListener('click', () => {
           this._openPlaylist = null;
           this._renderView('playlists');
