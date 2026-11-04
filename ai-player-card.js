@@ -48,6 +48,7 @@ class AiPlayerCard extends HTMLElement {
     this._beatTimer = null;
     this._resumePos = null;
     this._resumeOffer = null;
+    this._takenOver = false;
     // Vizualizace: real = Web Audio analyser (vyžaduje CORS na /media/),
     // fake = animované pásy, když CORS chybí.
     this._viz = { ctx: null, analyser: null, sourceFor: null, raf: null, real: null };
@@ -67,6 +68,9 @@ class AiPlayerCard extends HTMLElement {
     this._bindMedia(this._video);
     this._bindSwipe();
     this._loadLibrary();
+    // Sledujeme sdílený stav — když přehrávání převezme jiné zařízení,
+    // ztišíme se a ukážeme to (stejné pravidlo jako webový přehrávač).
+    setInterval(() => this._pollState(), 4000);
   }
 
   getCardSize() {
@@ -522,6 +526,47 @@ class AiPlayerCard extends HTMLElement {
     }).catch(() => {});
   }
 
+  /**
+   * Dotaz na sdílený stav — převzalo přehrávání jiné zařízení?
+   * `taken_over` spočítá server (cizí čerstvý vlastník, který hraje).
+   * My se pak podřídíme: zastavíme vlastní zvuk i heartbeat a ukážeme,
+   * kdo hraje místo nás.
+   */
+  async _pollState() {
+    try {
+      const res = await this._api('/api/v1/player/state', {
+        headers: { 'X-Player-Device': this._deviceId },
+      });
+      const taken = !!res.taken_over;
+      if (taken === this._takenOver) {
+        if (taken) this._renderTakenOver(res.state);
+        return;
+      }
+      this._takenOver = taken;
+      if (taken) {
+        this._media().pause();
+        this._stopHeartbeat();
+        this._renderTakenOver(res.state);
+      } else {
+        this._renderTakenOver(null);
+      }
+    } catch { /* síťové výpadky ignorujeme */ }
+  }
+
+  _renderTakenOver(state) {
+    const el = this.shadowRoot.querySelector('[data-takenover]');
+    if (!el) return;
+    if (this._takenOver && state) {
+      const who = state.device_id && state.device_id.startsWith('ha-')
+        ? 'jiná karta'
+        : 'webový přehrávač';
+      el.textContent = `Přehrává ${who}`;
+      el.style.display = 'block';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
   _resumePlaylist() {
     const offer = this._resumeOffer;
     if (!offer || !this._openPlaylist) return;
@@ -679,6 +724,8 @@ class AiPlayerCard extends HTMLElement {
         .resume .r-m { flex: 1; min-width: 0; font-size: 13px; }
         .resume .r-yes { background: var(--primary-color); color: #fff;
                          padding: 8px 14px; font-size: 13px; }
+        .takenover { display: none; text-align: center; font-size: 12px;
+                     color: var(--secondary-text-color); padding: 4px 0 8px; }
         .empty { padding: 24px; text-align: center; color: var(--secondary-text-color); font-size: 14px; }
 
         /* ------- mini přehrávač + záložky ------- */
@@ -718,6 +765,7 @@ class AiPlayerCard extends HTMLElement {
                 </div>
                 <canvas class="viz" data-viz></canvas>
               </div>
+              <div class="takenover" data-takenover></div>
               <div class="p-meta">
                 <div class="t" data-title>—</div>
                 <div class="a" data-artist></div>
