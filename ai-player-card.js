@@ -19,6 +19,37 @@ const VIEW_TITLES = { player: 'Přehrávač', library: 'Knihovna', playlists: 'P
 const SLEEP_MINUTES = [5, 10, 15, 30, 45, 60, 90, 120];
 
 /**
+ * Inline SVG ikony (Material Design cesty, fill=currentColor → přeberou
+ * barvu aktivního tématu HA). Žádné emoji — vypadají jednotně napříč
+ * platformami a nasvícené barvě i ve světlém/tmavém režimu.
+ */
+const ICONS = {
+  play: 'M8,5.14V19.14L19,12.14L8,5.14Z',
+  pause: 'M14,19H18V5H14M6,19H10V5H6V19Z',
+  prev: 'M6,18L14.5,12L6,6V18M8,6H6V18H8V6Z',
+  next: 'M16,18H18V6H16M6,18L14.5,12L6,6V18Z',
+  shuffle: 'M14.83,13.41L13.42,14.82L16.55,17.95L14.5,20H20V14.5L17.96,16.54L14.83,13.41M14.5,4L16.54,6.04L4,18.59L5.41,20L17.96,7.46L20,9.5V4M10.59,9.17L5.41,4L4,5.41L9.17,10.58L10.59,9.17Z',
+  repeat: 'M17,17H7V14L3,18L7,22V19H19V13H17M7,7H17V10L21,6L17,2V5H5V11H7V7Z',
+  repeat_one: 'M13,15V9H12L10,10V11H11.5V15M17,17H7V14L3,18L7,22V19H19V13H17M7,7H17V10L21,6L17,2V5H5V11H7V7Z',
+  volume: 'M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z',
+  sleep: 'M23,12H17V10L20.39,6H17V4H23V6L19.62,10H23V12M15,16H9V14L12.39,10H9V8H15V10L11.62,14H15V16M7,20H1V18L4.39,14H1V12H7V14L3.62,18H7V20Z',
+  fullscreen: 'M5,5H10V7H7V10H5V5M14,5H19V10H17V7H14V5M17,14H19V19H14V17H17V14M10,17V19H5V14H7V17H10Z',
+  back: 'M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z',
+  close: 'M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z',
+  grid: 'M3,11H11V3H3M3,21H11V13H3M13,21H21V13H13M13,3V11H21V3H13Z',
+  list: 'M9,5V7H21V5M9,13H21V11H9M9,19H21V17H9M5,5V7H7V5M5,13H7V11H5M5,19H7V17H5Z',
+  note: 'M12,3V13.55A4,4 0 0,0 10,13C7.79,13 6,14.79 6,17S7.79,21 10,21 14,19.21 14,17V7H18V3H12Z',
+  music: 'M21,3V15.5A3.5,3.5 0 0,1 17.5,19A3.5,3.5 0 0,1 14,15.5A3.5,3.5 0 0,1 17.5,12C18.04,12 18.55,12.12 19,12.34V6.47L9,8.6V17.5A3.5,3.5 0 0,1 5.5,21A3.5,3.5 0 0,1 2,17.5A3.5,3.5 0 0,1 5.5,14C6.04,14 6.55,14.12 7,14.34V6L21,3Z',
+  bookshelf: 'M9,3V18H11V3H9M5,3V18H7V3H5M13,3V18H15V3H13M17,3V18H19V3H17M20,21H4V19H20V21Z',
+  playlist: 'M15,6H3V8H15V6M15,10H3V12H15V10M3,16H11V14H3V16M17,6V14.18C16.69,14.07 16.35,14 16,14A3,3 0 0,0 13,17A3,3 0 0,0 16,20A3,3 0 0,0 19,17V8H22V6H17Z',
+  queue: 'M7,5H21V7H7V5M7,13V11H21V13H7M4,4.5A1.5,1.5 0 0,1 5.5,6A1.5,1.5 0 0,1 4,7.5A1.5,1.5 0 0,1 2.5,6A1.5,1.5 0 0,1 4,4.5M4,10.5A1.5,1.5 0 0,1 5.5,12A1.5,1.5 0 0,1 4,13.5A1.5,1.5 0 0,1 2.5,12A1.5,1.5 0 0,1 4,10.5M7,19V17H21V19H7M4,16.5A1.5,1.5 0 0,1 5.5,18A1.5,1.5 0 0,1 4,19.5A1.5,1.5 0 0,1 2.5,18A1.5,1.5 0 0,1 4,16.5Z',
+};
+function icon(name, size = 22) {
+  const wh = size ? ` width="${size}" height="${size}"` : '';
+  return `<svg viewBox="0 0 24 24"${wh} fill="currentColor" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
+}
+
+/**
  * Sdílený stav na window — přežije zničení a znovuvytvoření karty.
  * HA dashboard při přepnutí pohledu kartu z DOMu odebere; <audio> v
  * document.body a fronta/index/timery mimo kartu → hudba hraje dál
@@ -772,7 +803,9 @@ class AiPlayerCard extends HTMLElement {
         .tile .disc .label { font-size: 24px; }
         .disc .label::after { content: ''; position: absolute; width: 16%; aspect-ratio: 1;
                 border-radius: 50%; background: #141414; }
-        .disc .label span { position: relative; z-index: 1; transform: translateY(-30%); }
+        .disc .label span { position: relative; z-index: 1; display: flex;
+                transform: translateY(-30%); }
+        .disc .label svg { width: 60%; height: 60%; }
         .row .ph, .mini .ph { width: 44px; height: 44px; border-radius: 8px; flex-shrink: 0; }
         .mini .ph { width: 40px; height: 40px; }
         .tile-t { font-size: 12px; font-weight: 600; padding: 6px 8px 0;
@@ -821,9 +854,9 @@ class AiPlayerCard extends HTMLElement {
               <div class="hero">
                 <div class="cover-pane">
                   <img class="cover" data-cover alt="" style="display:none">
-                  <div class="no-cover" data-nocover>♪</div>
+                  <div class="no-cover" data-nocover>${icon('note', 48)}</div>
                   <video data-video playsinline style="display:none"></video>
-                  <button class="fs" data-fs style="display:none" title="Fullscreen">⛶</button>
+                  <button class="fs" data-fs style="display:none" title="Fullscreen">${icon('fullscreen', 20)}</button>
                 </div>
                 <canvas class="viz" data-viz></canvas>
               </div>
@@ -837,16 +870,16 @@ class AiPlayerCard extends HTMLElement {
                 <span class="time" data-time>0:00 / 0:00</span>
               </div>
               <div class="controls">
-                <button data-shuffle title="Náhodně">🔀</button>
-                <button class="big" data-prev title="Předchozí">⏮</button>
-                <button class="big play" data-play title="Přehrát/pauza">▶</button>
-                <button class="big" data-next title="Další">⏭</button>
-                <button data-repeat title="Opakovat">�</button>
+                <button data-shuffle title="Náhodně">${icon('shuffle', 22)}</button>
+                <button class="big" data-prev title="Předchozí">${icon('prev', 32)}</button>
+                <button class="big play" data-play title="Přehrát/pauza">${icon('play', 40)}</button>
+                <button class="big" data-next title="Další">${icon('next', 32)}</button>
+                <button data-repeat title="Opakovat">${icon('repeat', 22)}</button>
               </div>
               <div class="row2">
-                <div class="vol">🔊<input type="range" data-volume min="0" max="100" value="80"></div>
+                <div class="vol">${icon('volume', 18)}<input type="range" data-volume min="0" max="100" value="80"></div>
                 <div class="sleep">
-                  😴
+                  ${icon('sleep', 18)}
                   <select data-sleep>
                     <option value="off">Sleeper</option>
                     <option value="track_end">Konec skladby</option>
@@ -870,15 +903,15 @@ class AiPlayerCard extends HTMLElement {
             <div class="t" data-mini-title>—</div>
             <div class="a" data-mini-artist></div>
           </div>
-          <button data-mini-play>▶</button>
-          <button data-mini-next>⏭</button>
+          <button data-mini-play>${icon('play', 22)}</button>
+          <button data-mini-next>${icon('next', 22)}</button>
         </div>
 
         <div class="tabs">
-          <button data-tabbtn="player"><span class="ic">🎵</span>Přehrávač</button>
-          <button data-tabbtn="library"><span class="ic">📚</span>Knihovna</button>
-          <button data-tabbtn="playlists"><span class="ic">📋</span>Playlisty</button>
-          <button data-tabbtn="queue"><span class="ic">≡</span>Fronta</button>
+          <button data-tabbtn="player"><span class="ic">${icon('music', 20)}</span>Přehrávač</button>
+          <button data-tabbtn="library"><span class="ic">${icon('bookshelf', 20)}</span>Knihovna</button>
+          <button data-tabbtn="playlists"><span class="ic">${icon('playlist', 20)}</span>Playlisty</button>
+          <button data-tabbtn="queue"><span class="ic">${icon('queue', 20)}</span>Fronta</button>
         </div>
 
       </ha-card>
@@ -903,7 +936,7 @@ class AiPlayerCard extends HTMLElement {
     $('[data-repeat]').addEventListener('click', (e) => {
       this._s.repeat = { off: 'all', all: 'one', one: 'off' }[this._s.repeat];
       e.currentTarget.classList.toggle('active', this._s.repeat !== 'off');
-      e.currentTarget.textContent = this._s.repeat === 'one' ? '🔂' : '🔁';
+      e.currentTarget.innerHTML = this._s.repeat === 'one' ? icon('repeat_one', 22) : icon('repeat', 22);
     });
     $('[data-seek]').addEventListener('input', (e) => {
       const dur = this._media().duration || 0;
@@ -954,7 +987,7 @@ class AiPlayerCard extends HTMLElement {
     $('[data-artist]').textContent = item
       ? [item.artist, item.album].filter(Boolean).join(' — ')
       : '';
-    $('[data-play]').textContent = paused ? '▶' : '⏸';
+    $('[data-play]').innerHTML = paused ? icon('play', 40) : icon('pause', 40);
 
     const cover = item && item.coverUrl ? this._base + item.coverUrl : '';
     $('[data-cover]').style.display = !isVideo && cover ? 'block' : 'none';
@@ -968,7 +1001,7 @@ class AiPlayerCard extends HTMLElement {
     const mc = $('[data-mini-cover]');
     mc.src = cover || '';
     mc.style.visibility = cover ? 'visible' : 'hidden';
-    $('[data-mini-play]').textContent = paused ? '▶' : '⏸';
+    $('[data-mini-play]').innerHTML = paused ? icon('play', 22) : icon('pause', 22);
 
     const wrap = $('[data-sleep-wrap]');
     if (this._s.sleep.mode !== 'off') {
@@ -1015,13 +1048,13 @@ class AiPlayerCard extends HTMLElement {
                <div class="r-m">Pokračovat od ${this._fmtDuration(this._resumeOffer.position)}<br>
                <b>${this._esc(this._resumeOffer.item.title)}</b></div>
                <button class="r-yes" data-resume>Pokračovat</button>
-               <button class="r-no" data-dismiss-resume title="Zavřít">✕</button>
+               <button class="r-no" data-dismiss-resume title="Zavřít">${icon('close', 16)}</button>
              </div>`
           : '';
 
         host.innerHTML =
-          `<div class="list-header"><button class="back" data-back>←</button>${this._esc(this._openPlaylist.name)}
-            <button class="more" data-toggleview style="margin-left:auto">${this._plGrid ? '☰' : '▦'}</button></div>` +
+          `<div class="list-header"><button class="back" data-back>${icon('back', 18)}</button>${this._esc(this._openPlaylist.name)}
+            <button class="more" data-toggleview style="margin-left:auto">${this._plGrid ? icon('list', 18) : icon('grid', 18)}</button></div>` +
           resume +
           (this._plGrid ? tiles : list || '<div class="empty">Playlist je prázdný.</div>');
 
@@ -1047,7 +1080,7 @@ class AiPlayerCard extends HTMLElement {
                   ${p.cover_url
                     ? `<img src="${this._base + p.cover_url}" loading="lazy" alt="">`
                     : `<div class="tile-cover">${this._vinyl()}</div>`}
-                  <button class="tile-play" data-plplay="${n}" title="Přehrát playlist">▶</button>
+                  <button class="tile-play" data-plplay="${n}" title="Přehrát playlist">${icon('play', 16)}</button>
                   <div class="tile-t">${this._esc(p.name)}</div>
                   <div class="tile-s">${p.items_count} položek</div>
                 </div>`).join('')}</div>`
@@ -1094,7 +1127,7 @@ class AiPlayerCard extends HTMLElement {
   }
 
   _vinyl() {
-    return '<div class="disc"><div class="label"><span>♪</span></div></div>';
+    return `<div class="disc"><div class="label"><span>${icon('note', 0)}</span></div></div>`;
   }
 
   async _playPlaylist(playlist) {
