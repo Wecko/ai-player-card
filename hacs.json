@@ -1,0 +1,6 @@
+{
+  "name": "AI Player Card",
+  "filename": "ai-player-card.js",
+  "render_readme": true,
+  "homeassistant": "2024.1.0"
+}
