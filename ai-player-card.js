@@ -365,7 +365,9 @@ class AiPlayerCard extends HTMLElement {
       if (!d || e.pointerId !== d.id) return;
       this._drag = null;
       track.style.transition = '';
-      track.style.transform = '';
+      // Transform znovu nastavit — smazání by vizuálně skočilo na pohled 0
+      // i když _view zůstal jinde (klik na položky se pak "poslal na Přehrávač").
+      this._applyViewTransform();
       if (!d.active) return;
       // Po swipu následuje i click event — bez potlačení by drag na
       // seznamu rovnou spustil přehrání řádku pod prstem.
@@ -547,16 +549,34 @@ class AiPlayerCard extends HTMLElement {
         .pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
                    gap: 10px; }
         .tile { border-radius: 10px; overflow: hidden; cursor: pointer; min-height: 44px;
+                position: relative;
                 background: var(--secondary-background-color, #f2f2f2); }
         .tile:active { opacity: .7; }
         .tile.playing { outline: 2px solid var(--primary-color); }
         .tile img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
-        .tile-nocover, .tile-cover { width: 100%; aspect-ratio: 1; display: flex;
-                        align-items: center; justify-content: center; font-size: 30px; opacity: .4; }
-        .tile-cover { font-size: 44px; opacity: 1;
-                      background: linear-gradient(135deg,
-                        var(--primary-color, #03a9f4) 0%,
-                        var(--secondary-background-color, #f2f2f2) 160%); }
+        .tile-nocover, .tile-cover { width: 100%; aspect-ratio: 1; }
+        .tile .tile-play { position: absolute; top: 6px; right: 6px; min-width: 40px;
+                           min-height: 40px; padding: 4px; font-size: 16px; color: #fff;
+                           background: rgba(0,0,0,.5); border-radius: 50%; }
+
+        /* LP deska jako placeholder, když médium/playlist nemá cover */
+        .disc { position: relative; width: 100%; height: 100%; border-radius: 50%;
+                background: #141414; overflow: hidden;
+                display: flex; align-items: center; justify-content: center;
+                box-shadow: inset 0 0 0 1px #000; }
+        .disc::before { content: ''; position: absolute; inset: 7%; border-radius: 50%;
+                background: repeating-radial-gradient(circle,
+                  #0d0d0d 0 2px, #1f1f1f 2px 4px); }
+        .disc .label { position: relative; width: 36%; aspect-ratio: 1; border-radius: 50%;
+                background: var(--primary-color, #03a9f4); color: #fff;
+                display: flex; align-items: center; justify-content: center;
+                font-size: 13px; }
+        .tile .disc .label { font-size: 24px; }
+        .disc .label::after { content: ''; position: absolute; width: 16%; aspect-ratio: 1;
+                border-radius: 50%; background: #141414; }
+        .disc .label span { position: relative; z-index: 1; transform: translateY(-30%); }
+        .row .ph, .mini .ph { width: 44px; height: 44px; border-radius: 8px; flex-shrink: 0; }
+        .mini .ph { width: 40px; height: 40px; }
         .tile-t { font-size: 12px; font-weight: 600; padding: 6px 8px 0;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .tile-s { font-size: 11px; color: var(--secondary-text-color); padding: 0 8px 6px;
@@ -778,7 +798,7 @@ class AiPlayerCard extends HTMLElement {
               <div class="tile ${current && i.uuid === current.uuid ? 'playing' : ''}" data-row="${n}">
                 ${i.coverUrl
                   ? `<img src="${this._base + i.coverUrl}" loading="lazy" alt="">`
-                  : '<div class="tile-nocover">♪</div>'}
+                  : `<div class="tile-nocover">${this._vinyl()}</div>`}
                 <div class="tile-t">${this._esc(i.title)}</div>
                 <div class="tile-s">${this._esc(i.artist || '')}</div>
               </div>`).join('')}</div>`
@@ -805,14 +825,21 @@ class AiPlayerCard extends HTMLElement {
                 <div class="tile" data-pl="${n}">
                   ${p.cover_url
                     ? `<img src="${this._base + p.cover_url}" loading="lazy" alt="">`
-                    : '<div class="tile-cover">📋</div>'}
+                    : `<div class="tile-cover">${this._vinyl()}</div>`}
+                  <button class="tile-play" data-plplay="${n}" title="Přehrát playlist">▶</button>
                   <div class="tile-t">${this._esc(p.name)}</div>
                   <div class="tile-s">${p.items_count} položek</div>
                 </div>`).join('')}</div>`
             : '<div class="empty">Žádné playlisty.</div>');
         host.querySelectorAll('[data-pl]').forEach((el) =>
+          el.addEventListener('click', (e) => {
+            // Klik na ▶ přehrává, ne otevírá detail.
+            if (e.target.closest('[data-plplay]')) return;
+            this._openPlaylistItems(this._playlists[parseInt(el.dataset.pl, 10)]);
+          }));
+        host.querySelectorAll('[data-plplay]').forEach((el) =>
           el.addEventListener('click', () =>
-            this._openPlaylistItems(this._playlists[parseInt(el.dataset.pl, 10)])));
+            this._playPlaylist(this._playlists[parseInt(el.dataset.plplay, 10)])));
       }
       return;
     }
@@ -845,11 +872,29 @@ class AiPlayerCard extends HTMLElement {
     ['library', 'playlists', 'queue'].forEach((v) => this._renderView(v));
   }
 
+  _vinyl() {
+    return '<div class="disc"><div class="label"><span>♪</span></div></div>';
+  }
+
+  async _playPlaylist(playlist) {
+    try {
+      const data = await this._api(`/api/v1/playlists/${playlist.id}/items`);
+      if (!data.data.length) {
+        this._showError(`Playlist „${playlist.name}“ je prázdný.`);
+        return;
+      }
+      this._playQueue(data.data, 0);
+      this._setView(0);
+    } catch (e) {
+      this._showError(`Playlist: ${e.message}`);
+    }
+  }
+
   _row(item, playing, n) {
     const cover = item.coverUrl ? this._base + item.coverUrl : '';
     return `
       <div class="row ${playing ? 'playing' : ''}" data-row="${n}">
-        ${cover ? `<img src="${cover}" loading="lazy" alt="">` : '<img alt="" style="visibility:hidden">'}
+        ${cover ? `<img src="${cover}" loading="lazy" alt="">` : `<div class="ph">${this._vinyl()}</div>`}
         <div class="meta2">
           <div class="t">${this._esc(item.title)}</div>
           <div class="s">${this._esc([item.artist, item.album].filter(Boolean).join(' — ') || item.filename || '')}</div>
