@@ -18,15 +18,46 @@ const VIEWS = ['player', 'library', 'playlists', 'queue'];
 const VIEW_TITLES = { player: 'Přehrávač', library: 'Knihovna', playlists: 'Playlisty', queue: 'Fronta' };
 const SLEEP_MINUTES = [5, 10, 15, 30, 45, 60, 90, 120];
 
+/**
+ * Sdílený stav na window — přežije zničení a znovuvytvoření karty.
+ * HA dashboard při přepnutí pohledu kartu z DOMu odebere; <audio> v
+ * document.body a fronta/index/timery mimo kartu → hudba hraje dál
+ * a karta po návratu jen naváže UI.
+ */
+const STORE_KEY = '__aipStore';
+function store() {
+  if (!window[STORE_KEY]) {
+    window[STORE_KEY] = {
+      audio: null,          // singleton <audio> v document.body
+      queue: [], index: -1, repeat: 'off', shuffle: false,
+      userVolume: 0.8,
+      sleep: { mode: 'off', deadline: null, interval: null, fadeSeconds: 20 },
+      deviceId: null,
+      beatTimer: null, pollTimer: null,
+      takenOver: false,
+      lastCard: null,        // poslední živá instance karty (pro delegaci)
+      // Vizualizace: real = Web Audio analyser (vyžaduje CORS na /media/),
+      // fake = animované pásy, když CORS chybí.
+      viz: { ctx: null, analyser: null, sourceFor: null, raf: null, real: null },
+    };
+  }
+  const s = window[STORE_KEY];
+  if (!s.deviceId) {
+    s.deviceId = localStorage.getItem('ai-player-device');
+    if (!s.deviceId) {
+      s.deviceId = 'ha-' + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem('ai-player-device', s.deviceId);
+    }
+  }
+  return s;
+}
+
 class AiPlayerCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this._queue = [];
-    this._index = -1;
-    this._repeat = 'off'; // off | all | one
-    this._shuffle = false;
-    this._sleep = { mode: 'off', deadline: null, interval: null, fadeSeconds: 20 };
+    this._s = store();
+    // UI-stav konkrétní instance karty (při odpojení zaniká).
     this._view = 0;
     this._page = 1;
     this._lastPage = 1;
@@ -38,20 +69,23 @@ class AiPlayerCard extends HTMLElement {
     this._reported = false;
     this._debounce = null;
     this._drag = null;
-    // Stabilní device id pro sdílený stav přehrávače (player/state) —
-    // díky němu se pozice synchronizuje napříč zařízeními.
-    this._deviceId = localStorage.getItem('ai-player-device');
-    if (!this._deviceId) {
-      this._deviceId = 'ha-' + Math.random().toString(36).slice(2, 10);
-      localStorage.setItem('ai-player-device', this._deviceId);
-    }
-    this._beatTimer = null;
     this._resumePos = null;
     this._resumeOffer = null;
-    this._takenOver = false;
-    // Vizualizace: real = Web Audio analyser (vyžaduje CORS na /media/),
-    // fake = animované pásy, když CORS chybí.
-    this._viz = { ctx: null, analyser: null, sourceFor: null, raf: null, real: null };
+  }
+
+  connectedCallback() {
+    // Nově připojená karta přebírá delegaci událostí přehrávače.
+    this._s.lastCard = this;
+    if (this.shadowRoot.querySelector('[data-title]')) {
+      this._refreshPlayer();
+      this._refreshLists();
+      this._applyViewTransform();
+      this._startViz();
+    }
+  }
+
+  disconnectedCallback() {
+    if (this._s.lastCard === this) this._s.lastCard = null;
   }
 
   setConfig(config) {
@@ -62,15 +96,30 @@ class AiPlayerCard extends HTMLElement {
     this._base = config.url.replace(/\/+$/, '');
     this._title = config.title || 'Přehrávač';
     this._render();
-    this._audio = this.shadowRoot.querySelector('audio');
     this._video = this.shadowRoot.querySelector('video');
-    this._bindMedia(this._audio);
     this._bindMedia(this._video);
+
+    // Singleton <audio> v body — přežije odpojení karty z DOMu.
+    if (!this._s.audio) {
+      const el = document.createElement('audio');
+      el.preload = 'none';
+      el.style.display = 'none';
+      document.body.appendChild(el);
+      this._s.audio = el;
+      this._bindMedia(el);
+    }
+
+    this._s.lastCard = this;
     this._bindSwipe();
     this._loadLibrary();
+    this._refreshPlayer();
     // Sledujeme sdílený stav — když přehrávání převezme jiné zařízení,
     // ztišíme se a ukážeme to (stejné pravidlo jako webový přehrávač).
-    setInterval(() => this._pollState(), 4000);
+    // Interval žije na storu → běží i když je karta dočasně mimo DOM.
+    if (!this._s.pollTimer) {
+      this._s.pollTimer = setInterval(
+        () => (this._s.lastCard || this)._pollState(), 4000);
+    }
   }
 
   getCardSize() {
@@ -82,8 +131,8 @@ class AiPlayerCard extends HTMLElement {
   }
 
   _media() {
-    const item = this._queue[this._index];
-    return item && item.type === 'video' ? this._video : this._audio;
+    const item = this._s.queue[this._s.index];
+    return item && item.type === 'video' ? this._video : this._s.audio;
   }
 
   /* ----------------------------- API ----------------------------- */
@@ -152,20 +201,20 @@ class AiPlayerCard extends HTMLElement {
   /* ---------------------------- přehrávání ---------------------------- */
 
   _playQueue(items, index) {
-    this._queue = items.filter((i) => i.playable !== false);
-    const offset = items.length - this._queue.length;
-    this._index = Math.max(0, index - offset);
+    this._s.queue = items.filter((i) => i.playable !== false);
+    const offset = items.length - this._s.queue.length;
+    this._s.index = Math.max(0, index - offset);
     this._playCurrent();
   }
 
   async _playCurrent() {
-    const item = this._queue[this._index];
+    const item = this._s.queue[this._s.index];
     if (!item) return;
     try {
       const src = await this._api(`/api/v1/media/${item.uuid}/playback-url`);
       const url = this._base + src.url;
       const media = this._media();
-      const other = media === this._audio ? this._video : this._audio;
+      const other = media === this._s.audio ? this._video : this._s.audio;
       other.pause();
       other.removeAttribute('src');
 
@@ -182,12 +231,12 @@ class AiPlayerCard extends HTMLElement {
   }
 
   _next() {
-    if (this._shuffle && this._queue.length > 1) {
-      this._index = Math.floor(Math.random() * this._queue.length);
-    } else if (this._index < this._queue.length - 1) {
-      this._index++;
-    } else if (this._repeat === 'all') {
-      this._index = 0;
+    if (this._s.shuffle && this._s.queue.length > 1) {
+      this._s.index = Math.floor(Math.random() * this._s.queue.length);
+    } else if (this._s.index < this._s.queue.length - 1) {
+      this._s.index++;
+    } else if (this._s.repeat === 'all') {
+      this._s.index = 0;
     } else {
       return false;
     }
@@ -199,18 +248,18 @@ class AiPlayerCard extends HTMLElement {
       this._media().currentTime = 0;
       return;
     }
-    if (this._index > 0) {
-      this._index--;
+    if (this._s.index > 0) {
+      this._s.index--;
       this._playCurrent();
     }
   }
 
   _onEnded() {
-    if (this._sleep.mode === 'track_end') {
+    if (this._s.sleep.mode === 'track_end') {
       this._sleepFinished();
       return;
     }
-    if (this._repeat === 'one') {
+    if (this._s.repeat === 'one') {
       const m = this._media();
       m.currentTime = 0;
       m.play();
@@ -244,22 +293,22 @@ class AiPlayerCard extends HTMLElement {
    * simulované pásy a zvuk hraje normálně.
    */
   async _setupVisualizer(media, url) {
-    if (this._viz.real === null) {
+    if (this._s.viz.real === null) {
       try {
         const res = await fetch(url, { method: 'HEAD' });
-        this._viz.real = res.ok;
+        this._s.viz.real = res.ok;
       } catch {
-        this._viz.real = false;
+        this._s.viz.real = false;
       }
     }
 
-    if (this._viz.real) {
+    if (this._s.viz.real) {
       media.crossOrigin = 'anonymous';
       try {
         this._ensureAudioGraph(media);
         return;
       } catch {
-        this._viz.real = false;
+        this._s.viz.real = false;
         media.crossOrigin = null;
       }
     }
@@ -267,24 +316,24 @@ class AiPlayerCard extends HTMLElement {
   }
 
   _ensureAudioGraph(media) {
-    if (this._viz.sourceFor === media) return;
-    if (!this._viz.ctx) {
+    if (this._s.viz.sourceFor === media) return;
+    if (!this._s.viz.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
-      this._viz.ctx = new AC();
-      this._viz.analyser = this._viz.ctx.createAnalyser();
-      this._viz.analyser.fftSize = 128;
-      this._viz.analyser.smoothingTimeConstant = 0.8;
-      this._viz.analyser.connect(this._viz.ctx.destination);
+      this._s.viz.ctx = new AC();
+      this._s.viz.analyser = this._s.viz.ctx.createAnalyser();
+      this._s.viz.analyser.fftSize = 128;
+      this._s.viz.analyser.smoothingTimeConstant = 0.8;
+      this._s.viz.analyser.connect(this._s.viz.ctx.destination);
     }
-    this._viz.ctx.createMediaElementSource(media).connect(this._viz.analyser);
-    this._viz.sourceFor = media;
-    if (this._viz.ctx.state === 'suspended') this._viz.ctx.resume();
+    this._s.viz.ctx.createMediaElementSource(media).connect(this._s.viz.analyser);
+    this._s.viz.sourceFor = media;
+    if (this._s.viz.ctx.state === 'suspended') this._s.viz.ctx.resume();
   }
 
   _ensureFakeViz() { /* fake režim běží přes rAF smyčku, setup není třeba */ }
 
   _startViz() {
-    if (this._viz.raf) return;
+    if (this._s.viz.raf) return;
     const canvas = this.shadowRoot.querySelector('[data-viz]');
     if (!canvas) return;
     const ctx2d = canvas.getContext('2d');
@@ -292,7 +341,13 @@ class AiPlayerCard extends HTMLElement {
     let t = 0;
 
     const draw = () => {
-      this._viz.raf = requestAnimationFrame(draw);
+      // Mrtvá karta (mimo DOM) nekreslí — rAF se zastaví a na
+      // reconnect ho spustí connectedCallback znovu.
+      if (!this.isConnected) {
+        this._s.viz.raf = null;
+        return;
+      }
+      this._s.viz.raf = requestAnimationFrame(draw);
       const w = (canvas.width = canvas.clientWidth * devicePixelRatio);
       const h = (canvas.height = canvas.clientHeight * devicePixelRatio);
       ctx2d.clearRect(0, 0, w, h);
@@ -300,8 +355,8 @@ class AiPlayerCard extends HTMLElement {
       const gap = w / bars;
 
       let levels;
-      if (this._viz.real && this._viz.analyser) {
-        this._viz.analyser.getByteFrequencyData(data);
+      if (this._s.viz.real && this._s.viz.analyser) {
+        this._s.viz.analyser.getByteFrequencyData(data);
         levels = (i) => data[Math.floor((i / bars) * data.length * 0.7)] / 255;
       } else {
         const playing = this._media() && !this._media().paused;
@@ -328,37 +383,37 @@ class AiPlayerCard extends HTMLElement {
   /* ---------------------------- sleep timer ---------------------------- */
 
   _setSleep(mode, minutes = null) {
-    clearInterval(this._sleep.interval);
-    this._sleep.interval = null;
-    this._sleep.mode = mode;
-    this._sleep.deadline = mode === 'minutes' ? Date.now() + minutes * 60000 : null;
+    clearInterval(this._s.sleep.interval);
+    this._s.sleep.interval = null;
+    this._s.sleep.mode = mode;
+    this._s.sleep.deadline = mode === 'minutes' ? Date.now() + minutes * 60000 : null;
     if (mode === 'minutes') {
-      this._sleep.interval = setInterval(() => this._sleepTick(), 1000);
+      this._s.sleep.interval = setInterval(() => this._sleepTick(), 1000);
     }
     this._refreshPlayer();
   }
 
   _sleepTick() {
-    const left = Math.round((this._sleep.deadline - Date.now()) / 1000);
+    const left = Math.round((this._s.sleep.deadline - Date.now()) / 1000);
     if (left <= 0) {
       this._sleepFinished();
       return;
     }
-    if (left <= this._sleep.fadeSeconds) {
-      const base = this._userVolume ?? 0.8;
-      this._media().volume = Math.max(0, base * (left / this._sleep.fadeSeconds));
+    if (left <= this._s.sleep.fadeSeconds) {
+      const base = this._s.userVolume ?? 0.8;
+      this._media().volume = Math.max(0, base * (left / this._s.sleep.fadeSeconds));
     }
     const el = this.shadowRoot.querySelector('[data-sleep-left]');
     if (el) el.textContent = this._fmtDuration(left);
   }
 
   _sleepFinished() {
-    clearInterval(this._sleep.interval);
-    this._sleep.interval = null;
-    this._sleep.mode = 'off';
-    this._sleep.deadline = null;
+    clearInterval(this._s.sleep.interval);
+    this._s.sleep.interval = null;
+    this._s.sleep.mode = 'off';
+    this._s.sleep.deadline = null;
     this._media().pause();
-    this._media().volume = this._userVolume ?? 0.8;
+    this._media().volume = this._s.userVolume ?? 0.8;
     this._refreshPlayer();
   }
 
@@ -443,40 +498,44 @@ class AiPlayerCard extends HTMLElement {
   /* ------------------------------ UI ------------------------------ */
 
   _bindMedia(media) {
-    media.volume = this._userVolume ?? 0.8;
-    media.addEventListener('ended', () => this._onEnded());
+    media.volume = this._s.userVolume ?? 0.8;
+    // Události delegujeme na aktuálně živou kartu — element může
+    // přežít několik jejích zničení a znovuvytvoření.
+    const live = () => this._s.lastCard || this;
+    media.addEventListener('ended', () => live()._onEnded());
     media.addEventListener('play', () => {
-      this._refreshPlayer();
-      this._startHeartbeat();
+      live()._refreshPlayer();
+      live()._startHeartbeat();
     });
     media.addEventListener('pause', () => {
-      this._refreshPlayer();
-      this._stopHeartbeat();
-      this._beat(); // jeden uvolňující tik — ostatní zařízení vědí, že jsme ztichli
+      live()._refreshPlayer();
+      live()._stopHeartbeat();
+      live()._beat(); // jeden uvolňující tik — ostatní zařízení vědí, že jsme ztichli
     });
     media.addEventListener('loadedmetadata', () => {
       // Pokračování: skočíme tam, kde se naposledy skončilo.
-      if (this._resumePos !== null && isFinite(media.duration)) {
-        media.currentTime = Math.min(this._resumePos, Math.max(0, media.duration - 1));
-        this._resumePos = null;
+      if (live()._resumePos !== null && isFinite(media.duration)) {
+        media.currentTime = Math.min(live()._resumePos, Math.max(0, media.duration - 1));
+        live()._resumePos = null;
       }
     });
     media.addEventListener('timeupdate', () => {
       const pos = media.currentTime;
       const dur = media.duration || 0;
-      const bar = this.shadowRoot.querySelector('[data-seek]');
+      const card = live();
+      const bar = card.shadowRoot.querySelector('[data-seek]');
       if (bar && !bar.matches(':active')) bar.value = dur ? (pos / dur) * 100 : 0;
-      const t = this.shadowRoot.querySelector('[data-time]');
+      const t = card.shadowRoot.querySelector('[data-time]');
       if (t) t.textContent = `${this._fmtDuration(pos)} / ${this._fmtDuration(dur)}`;
-      this._maybeReportPlay(pos, dur);
+      card._maybeReportPlay(pos, dur);
     });
   }
 
   _maybeReportPlay(position, duration) {
-    if (this._reported || !this._queue[this._index]) return;
+    if (this._reported || !this._s.queue[this._s.index]) return;
     if (position >= Math.min(duration * 0.5, 240)) {
       this._reported = true;
-      this._api(`/api/v1/media/${this._queue[this._index].uuid}/plays`, {
+      this._api(`/api/v1/media/${this._s.queue[this._s.index].uuid}/plays`, {
         method: 'POST',
         body: JSON.stringify({ position_seconds: position, completed: position >= duration - 1 }),
       }).catch(() => {});
@@ -493,13 +552,16 @@ class AiPlayerCard extends HTMLElement {
   /* --------------------- sdílený stav (resume) --------------------- */
 
   _startHeartbeat() {
-    if (this._beatTimer) return;
-    this._beatTimer = setInterval(() => this._beat(), 5000);
+    if (this._s.beatTimer) return;
+    // Interval na storu — běží i když je karta dočasně mimo DOM,
+    // takže pozice zůstává napříč zařízeními aktuální.
+    this._s.beatTimer = setInterval(
+      () => (this._s.lastCard || this)._beat(), 5000);
   }
 
   _stopHeartbeat() {
-    clearInterval(this._beatTimer);
-    this._beatTimer = null;
+    clearInterval(this._s.beatTimer);
+    this._s.beatTimer = null;
   }
 
   /**
@@ -508,20 +570,20 @@ class AiPlayerCard extends HTMLElement {
    * přesně tam, kde tato karta skončila.
    */
   _beat() {
-    const item = this._queue[this._index];
+    const item = this._s.queue[this._s.index];
     if (!item) return;
     const media = this._media();
     this._api('/api/v1/player/state', {
       method: 'PUT',
       body: JSON.stringify({
-        device_id: this._deviceId,
+        device_id: this._s.deviceId,
         current_uuid: item.uuid,
         position_seconds: media.currentTime || 0,
-        volume: this._userVolume ?? 0.8,
+        volume: this._s.userVolume ?? 0.8,
         is_playing: !media.paused,
-        repeat_mode: this._repeat,
-        shuffle: this._shuffle,
-        queue: this._queue.map((i) => i.uuid),
+        repeat_mode: this._s.repeat,
+        shuffle: this._s.shuffle,
+        queue: this._s.queue.map((i) => i.uuid),
       }),
     }).catch(() => {});
   }
@@ -535,14 +597,14 @@ class AiPlayerCard extends HTMLElement {
   async _pollState() {
     try {
       const res = await this._api('/api/v1/player/state', {
-        headers: { 'X-Player-Device': this._deviceId },
+        headers: { 'X-Player-Device': this._s.deviceId },
       });
       const taken = !!res.taken_over;
-      if (taken === this._takenOver) {
+      if (taken === this._s.takenOver) {
         if (taken) this._renderTakenOver(res.state);
         return;
       }
-      this._takenOver = taken;
+      this._s.takenOver = taken;
       if (taken) {
         this._media().pause();
         this._stopHeartbeat();
@@ -556,7 +618,7 @@ class AiPlayerCard extends HTMLElement {
   _renderTakenOver(state) {
     const el = this.shadowRoot.querySelector('[data-takenover]');
     if (!el) return;
-    if (this._takenOver && state) {
+    if (this._s.takenOver && state) {
       const who = state.device_id && state.device_id.startsWith('ha-')
         ? 'jiná karta'
         : 'webový přehrávač';
@@ -819,7 +881,6 @@ class AiPlayerCard extends HTMLElement {
           <button data-tabbtn="queue"><span class="ic">≡</span>Fronta</button>
         </div>
 
-        <audio preload="none"></audio>
       </ha-card>
     `;
 
@@ -836,21 +897,21 @@ class AiPlayerCard extends HTMLElement {
     $('[data-next]').addEventListener('click', () => { if (this._next()) this._playCurrent(); });
     $('[data-fs]').addEventListener('click', () => this._toggleFullscreen());
     $('[data-shuffle]').addEventListener('click', (e) => {
-      this._shuffle = !this._shuffle;
-      e.currentTarget.classList.toggle('active', this._shuffle);
+      this._s.shuffle = !this._s.shuffle;
+      e.currentTarget.classList.toggle('active', this._s.shuffle);
     });
     $('[data-repeat]').addEventListener('click', (e) => {
-      this._repeat = { off: 'all', all: 'one', one: 'off' }[this._repeat];
-      e.currentTarget.classList.toggle('active', this._repeat !== 'off');
-      e.currentTarget.textContent = this._repeat === 'one' ? '🔂' : '🔁';
+      this._s.repeat = { off: 'all', all: 'one', one: 'off' }[this._s.repeat];
+      e.currentTarget.classList.toggle('active', this._s.repeat !== 'off');
+      e.currentTarget.textContent = this._s.repeat === 'one' ? '🔂' : '🔁';
     });
     $('[data-seek]').addEventListener('input', (e) => {
       const dur = this._media().duration || 0;
       if (dur) this._media().currentTime = (e.target.value / 100) * dur;
     });
     $('[data-volume]').addEventListener('input', (e) => {
-      this._userVolume = e.target.value / 100;
-      this._media().volume = this._userVolume;
+      this._s.userVolume = e.target.value / 100;
+      this._media().volume = this._s.userVolume;
     });
     $('[data-sleep]').addEventListener('change', (e) => {
       const v = e.target.value;
@@ -876,7 +937,7 @@ class AiPlayerCard extends HTMLElement {
   _togglePlay() {
     const m = this._media();
     if (!m.src) {
-      if (this._queue.length) this._playCurrent();
+      if (this._s.queue.length) this._playCurrent();
       return;
     }
     if (m.paused) m.play(); else m.pause();
@@ -884,7 +945,7 @@ class AiPlayerCard extends HTMLElement {
   }
 
   _refreshPlayer() {
-    const item = this._queue[this._index];
+    const item = this._s.queue[this._s.index];
     const $ = (s) => this.shadowRoot.querySelector(s);
     const isVideo = item && item.type === 'video';
     const paused = this._media().paused;
@@ -910,10 +971,10 @@ class AiPlayerCard extends HTMLElement {
     $('[data-mini-play]').textContent = paused ? '▶' : '⏸';
 
     const wrap = $('[data-sleep-wrap]');
-    if (this._sleep.mode !== 'off') {
+    if (this._s.sleep.mode !== 'off') {
       wrap.style.display = 'inline';
-      $('[data-sleep-left]').textContent = this._sleep.mode === 'minutes'
-        ? this._fmtDuration((this._sleep.deadline - Date.now()) / 1000)
+      $('[data-sleep-left]').textContent = this._s.sleep.mode === 'minutes'
+        ? this._fmtDuration((this._s.sleep.deadline - Date.now()) / 1000)
         : 'konec skladby';
     } else {
       wrap.style.display = 'none';
@@ -923,15 +984,15 @@ class AiPlayerCard extends HTMLElement {
   _renderView(name) {
     const host = this.shadowRoot.querySelector(`[data-view="${name}"]`);
     if (!host) return;
-    const current = this._queue[this._index];
+    const current = this._s.queue[this._s.index];
 
     if (name === 'queue') {
       host.innerHTML =
         `<div class="list-header">${VIEW_TITLES.queue}</div>` +
-        (this._queue.length
-          ? this._queue.map((i, n) => this._row(i, n === this._index, n)).join('')
+        (this._s.queue.length
+          ? this._s.queue.map((i, n) => this._row(i, n === this._s.index, n)).join('')
           : '<div class="empty">Fronta je prázdná.</div>');
-      this._bindRows(host, (n) => { this._index = n; this._playCurrent(); });
+      this._bindRows(host, (n) => { this._s.index = n; this._playCurrent(); });
       return;
     }
 
