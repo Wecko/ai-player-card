@@ -19,6 +19,24 @@ const VIEW_TITLES = { player: 'Přehrávač', library: 'Knihovna', playlists: 'P
 const SLEEP_MINUTES = [5, 10, 15, 30, 45, 60, 90, 120];
 
 /**
+ * Verze karty — po každé změně zvedni. Při prvním načtení nové verze
+ * se dashboard sám reloadne, takže po update v HACS není potřeba
+ * manuální hard refresh (HACS navíc mění ?hacstag= v URL resource,
+ * takže se nový soubor stáhne vždy).
+ */
+const CARD_VERSION = '1.1.0';
+(function versionGuard() {
+  try {
+    const key = 'ai-player-card-version';
+    const prev = localStorage.getItem(key);
+    if (prev === CARD_VERSION) return;
+    localStorage.setItem(key, CARD_VERSION);
+    // První instalace (prev === null) nereloadujeme — není co obnovit.
+    if (prev !== null) location.reload();
+  } catch { /* localStorage nedostupný → prostě nepřereloadováváme */ }
+})();
+
+/**
  * Inline SVG ikony (Material Design cesty, fill=currentColor → přeberou
  * barvu aktivního tématu HA). Žádné emoji — vypadají jednotně napříč
  * platformami a nasvícené barvě i ve světlém/tmavém režimu.
