@@ -712,7 +712,7 @@ class AiPlayerCard extends HTMLElement {
         .cover-pane .no-cover { font-size: 46px; opacity: .4; }
         .cover-pane video { width: 100%; height: 100%; object-fit: contain; background: #000; }
         .cover-pane .fs { position: absolute; top: 8px; left: 8px; z-index: 2;
-                          background: rgba(0,0,0,.45); border-radius: 10px; }
+                          color: #fff; background: rgba(0,0,0,.45); border-radius: 10px; }
         canvas.viz { flex: 2; min-width: 0; height: 100%; pointer-events: none; }
 
         .p-meta { text-align: center; margin: 8px 4px 2px; flex-shrink: 0; }
