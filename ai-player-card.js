@@ -382,9 +382,7 @@ class AiPlayerCard extends HTMLElement {
   _setView(i) {
     this._view = Math.max(0, Math.min(VIEWS.length - 1, i));
     const name = VIEWS[this._view];
-    const track = this.shadowRoot.querySelector('[data-track]');
-    // Track je široký 4× viewport, proto 25 % na pohled.
-    track.style.transform = `translateX(${-this._view * 25}%)`;
+    this._applyViewTransform();
 
     this.shadowRoot.querySelectorAll('[data-tabbtn]').forEach((b) =>
       b.classList.toggle('active', b.dataset.tabbtn === name));
@@ -394,6 +392,18 @@ class AiPlayerCard extends HTMLElement {
 
     if (name === 'playlists' && !this._playlists.length) this._loadPlaylists();
     if (name === 'queue') this._renderView('queue');
+  }
+
+  /**
+   * Posuv o celou šířku pohledu v pixelech. Procenta ne — transform %
+   * se počítá ze šířky .track, která je jen 1× viewport (položky mají
+   * flex-basis 100 % a přetékají), takže -25 % posune jen o čtvrtinu.
+   */
+  _applyViewTransform() {
+    const viewport = this.shadowRoot.querySelector('[data-viewport]');
+    const track = this.shadowRoot.querySelector('[data-track]');
+    if (!viewport || !track) return;
+    track.style.transform = `translateX(${-this._view * viewport.clientWidth}px)`;
   }
 
   /* ------------------------------ UI ------------------------------ */
@@ -451,7 +461,8 @@ class AiPlayerCard extends HTMLElement {
                  padding: 8px 12px; font-size: 13px; }
 
         /* ------- posuvné pohledy ------- */
-        .viewport { overflow: hidden; touch-action: pan-y; }
+        .viewport { overflow: hidden; touch-action: pan-y; user-select: none;
+                    -webkit-user-select: none; }
         .track { display: flex; transition: transform .28s cubic-bezier(.33,1,.68,1); }
         .view { flex: 0 0 100%; min-width: 0; height: 460px; overflow-y: auto;
                 overscroll-behavior: contain; padding: 14px 14px 6px; box-sizing: border-box; }
@@ -661,6 +672,12 @@ class AiPlayerCard extends HTMLElement {
     });
     this.shadowRoot.querySelectorAll('[data-tabbtn]').forEach((b) =>
       b.addEventListener('click', () => this._setView(VIEWS.indexOf(b.dataset.tabbtn))));
+
+    // Po zmenšení/zvětšení karty se přepočítá pixelový posuv.
+    if (window.ResizeObserver) {
+      new ResizeObserver(() => this._applyViewTransform())
+        .observe(this.shadowRoot.querySelector('[data-viewport]'));
+    }
 
     this._setView(0);
     this._renderView('library');
